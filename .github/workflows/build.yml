@@ -1,0 +1,196 @@
+name: Android Static Build nftables
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_arch:
+        description: 'Target architecture (aarch64/arm/x86_64/i686)'
+        required: false
+        default: 'aarch64'
+      ndk_version:
+        description: 'Android NDK version'
+        required: false
+        default: 'r27c'
+      android_api:
+        description: 'Android API level'
+        required: false
+        default: '30'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ github.event.inputs.ndk_version || 'r27c' }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            asciidoc \
+            automake \
+            autoconf \
+            libtool \
+            libltdl-dev \
+            pkg-config \
+            gcc \
+            perl \
+            flex \
+            bison \
+            libgmp-dev \
+            libreadline-dev \
+            build-essential
+
+      - name: Clone sources
+        run: |
+          git clone https://git.netfilter.org/libmnl
+          git clone https://git.netfilter.org/libnftnl
+          git clone https://git.netfilter.org/nftables
+      - name: Set build parameters
+        id: vars
+        run: |
+          case "${{ github.event.inputs.target_arch || 'aarch64' }}" in
+            aarch64) target="aarch64-linux-android" ;;
+            arm) target="armv7a-linux-androideabi" ;;
+            x86_64) target="x86_64-linux-android" ;;
+            i686) target="i686-linux-android" ;;
+            *) echo "Unsupported architecture"; exit 1 ;;
+          esac
+          echo "target=$target" >> $GITHUB_OUTPUT
+          echo "api=${{ github.event.inputs.android_api || '30' }}" >> $GITHUB_OUTPUT
+          echo "sysroot=$GITHUB_WORKSPACE/sysroot" >> $GITHUB_OUTPUT
+
+      - name: Build libmnl
+        run: |
+          cd libmnl
+          git checkout libmnl-1.0.5
+          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+          export TARGET=${{ steps.vars.outputs.target }}
+          export API=${{ steps.vars.outputs.api }}
+          export SYSROOT=${{ steps.vars.outputs.sysroot }}
+
+          export CC=$TOOLCHAIN/${TARGET}${API}-clang
+          export AR=$TOOLCHAIN/llvm-ar
+          export RANLIB=$TOOLCHAIN/llvm-ranlib
+
+          ./autogen.sh
+          ./configure \
+            --host=$TARGET \
+            --enable-static \
+            --disable-shared \
+            --prefix=/usr/local \
+            CC=$CC \
+            AR=$AR \
+            RANLIB=$RANLIB
+
+          make -j$(nproc)
+          make install DESTDIR=$SYSROOT
+
+      - name: Build libnftnl
+        run: |
+          cd libnftnl
+          git checkout libnftnl-1.2.9
+          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+          export TARGET=${{ steps.vars.outputs.target }}
+          export API=${{ steps.vars.outputs.api }}
+          export SYSROOT=${{ steps.vars.outputs.sysroot }}
+
+          export CC=$TOOLCHAIN/${TARGET}${API}-clang
+          export AR=$TOOLCHAIN/llvm-ar
+          export RANLIB=$TOOLCHAIN/llvm-ranlib
+          export PKG_CONFIG_PATH=$SYSROOT/usr/local/lib/pkgconfig
+
+          ./autogen.sh
+          ./configure \
+            --host=$TARGET \
+            --enable-static \
+            --disable-shared \
+            --prefix=/usr/local \
+            CC=$CC \
+            AR=$AR \
+            RANLIB=$RANLIB \
+            CFLAGS="-I$SYSROOT/usr/local/include" \
+            LDFLAGS="-L$SYSROOT/usr/local/lib -static"
+
+          make -j$(nproc)
+          make install DESTDIR=$SYSROOT
+
+      - name: Build GMP
+        run: |
+          # wget https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz
+          tar -xf ./gmp-6.3.0.tar.xz
+          cd gmp-6.3.0
+
+          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+          export TARGET=${{ steps.vars.outputs.target }}
+          export API=${{ steps.vars.outputs.api }}
+          export SYSROOT=${{ steps.vars.outputs.sysroot }}
+
+          export CC=$TOOLCHAIN/${TARGET}${API}-clang
+          export AR=$TOOLCHAIN/llvm-ar
+          export RANLIB=$TOOLCHAIN/llvm-ranlib
+          export CFLAGS="--static -fPIC"
+          export LDFLAGS="--static"
+
+          ./configure \
+            --host=$TARGET \
+            --enable-static \
+            --disable-shared \
+            --prefix=/usr/local \
+            CC=$CC \
+            AR=$AR \
+            RANLIB=$RANLIB \
+            CFLAGS="$CFLAGS" \
+            LDFLAGS="$LDFLAGS"
+
+          make -j$(nproc)
+          make install DESTDIR=$SYSROOT
+
+      - name: Build nft
+        run: |
+          cd nftables
+          git checkout v1.1.3
+          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+          export TARGET=${{ steps.vars.outputs.target }}
+          export API=${{ steps.vars.outputs.api }}
+          export SYSROOT=${{ steps.vars.outputs.sysroot }}
+
+          export CC=$TOOLCHAIN/${TARGET}${API}-clang
+          export AR=$TOOLCHAIN/llvm-ar
+          export RANLIB=$TOOLCHAIN/llvm-ranlib
+          export PKG_CONFIG_PATH=$SYSROOT/usr/local/lib/pkgconfig
+
+          sed -i 's/#ifndef __ANDROID__/\/\* Use NDK definitions \*\//' include/headers.h
+          sed -i '/struct ipv6hdr {/,/};/d' include/headers.h
+          echo '#include <linux/ipv6.h>' >> include/headers.h
+
+          sed -i 's/ip6r0_addr/addr/g' src/exthdr.c
+
+          ./autogen.sh
+          ./configure \
+            --host=$TARGET \
+            --enable-static \
+            --disable-shared \
+            --with-cli=no \
+            --prefix=/usr/local \
+            CC=$CC \
+            AR=$AR \
+            RANLIB=$RANLIB \
+            CFLAGS="-I$SYSROOT/usr/local/include" \
+            LDFLAGS="-L$SYSROOT/usr/local/lib -static"
+
+          make -j$(nproc)
+          make install DESTDIR=$SYSROOT
+
+          find $SYSROOT -type f \( -executable -o -name "*.a" \) -exec $TOOLCHAIN/llvm-strip --strip-all {} \;
+
+      - name: Upload nft binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ github.event.inputs.target_arch || 'aarch64' }}-nft-static
+          path: ${{ steps.vars.outputs.sysroot }}/usr/local/
