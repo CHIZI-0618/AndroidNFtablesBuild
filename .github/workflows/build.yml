@@ -165,11 +165,7 @@ jobs:
           export RANLIB=$TOOLCHAIN/llvm-ranlib
           export PKG_CONFIG_PATH=$SYSROOT/usr/local/lib/pkgconfig
 
-          sed -i 's/#ifndef __ANDROID__/\/\* Use NDK definitions \*\//' include/headers.h
-          sed -i '/struct ipv6hdr {/,/};/d' include/headers.h
-          echo '#include <linux/ipv6.h>' >> include/headers.h
-
-          sed -i 's/ip6r0_addr/addr/g' src/exthdr.c
+          curl -sL https://gist.githubusercontent.com/CHIZI-0618/4b1008d2d532583fcf8eb960bf7d11a0/raw/cce431f3f0617cc82e413cda51461fc05b40102d/android-ndk-r27d.patch | git apply -
 
           ./autogen.sh
           ./configure \
