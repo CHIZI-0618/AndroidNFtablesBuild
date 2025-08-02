@@ -185,7 +185,7 @@ jobs:
           export RANLIB=$TOOLCHAIN/llvm-ranlib
           export PKG_CONFIG_PATH=$SYSROOT/usr/local/lib/pkgconfig
 
-          curl -sL https://gist.githubusercontent.com/CHIZI-0618/4b1008d2d532583fcf8eb960bf7d11a0/raw/cce431f3f0617cc82e413cda51461fc05b40102d/android-ndk-r27d.patch | git apply -
+          curl -sL https://gist.githubusercontent.com/CHIZI-0618/4b1008d2d532583fcf8eb960bf7d11a0/raw/bfdceefbeb7c83da9aebb3f97b5443c7f757b468/android-ndk-r27d.patch | git apply -
 
           ./autogen.sh
           ./configure \
