@@ -24,7 +24,7 @@ jobs:
 
     - name: Download musl-cross toolchain for aarch64
       run: |
-        wget https://musl.cc/aarch64-linux-musl-cross.tgz
+        wget https://github.com/CHIZI-0618/AndroidNFtablesBuild/releases/download/v1/aarch64-linux-musl-cross.tgz
         sudo tar -xzf aarch64-linux-musl-cross.tgz -C /usr/local/
         echo "/usr/local/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
 
@@ -35,8 +35,9 @@ jobs:
         export AR="aarch64-linux-musl-ar"
         export STRIP="aarch64-linux-musl-strip"
         export RANLIB="aarch64-linux-musl-ranlib"
-        export CFLAGS="-static -Os -fPIE -fpic"
-        export LDFLAGS="-static -pie"
+        # 强制完全静态链接，移除动态链接器
+        export CFLAGS="-static -Os -fPIE -fpic -DANDROID"
+        export LDFLAGS="-static -pie -Wl,--no-dynamic-linker"
         export PREFIX="${{ env.PREFIX }}"
 
         export PKG_CONFIG="pkg-config"
@@ -108,7 +109,6 @@ jobs:
           --disable-shared \
           --enable-static \
           --without-json \
-          --without-cli \
           --with-cli=no \
           --with-mini-gmp \
           LIBMNL_CFLAGS="$LIBMNL_CFLAGS" \
@@ -116,7 +116,8 @@ jobs:
           LIBNFTNL_CFLAGS="$LIBNFTNL_CFLAGS" \
           LIBNFTNL_LIBS="$LIBNFTNL_LIBS"
 
-        make -j$(nproc) V=1
+        make -j$(nproc)
+
         $STRIP --strip-all src/nft -o src/nft-android-arm64
 
     - name: Upload artifacts
