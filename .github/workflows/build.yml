@@ -1,0 +1,126 @@
+name: Build nftables for Android arm64 with musl-cross
+
+on:
+  workflow_dispatch:
+
+env:
+  NFTABLES_VERSION: 1.0.6.1
+  LIBMNL_VERSION: 1.0.5
+  LIBNFTNL_VERSION: 1.2.4
+  PREFIX: /home/runner/musl-install
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential autoconf automake libtool pkg-config flex bison wget xz-utils
+
+    - name: Download musl-cross toolchain for aarch64
+      run: |
+        wget https://musl.cc/aarch64-linux-musl-cross.tgz
+        sudo tar -xzf aarch64-linux-musl-cross.tgz -C /usr/local/
+        echo "/usr/local/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+
+    - name: Setup environment
+      run: |
+        export CC="aarch64-linux-musl-gcc"
+        export CXX="aarch64-linux-musl-g++"
+        export AR="aarch64-linux-musl-ar"
+        export STRIP="aarch64-linux-musl-strip"
+        export RANLIB="aarch64-linux-musl-ranlib"
+        export CFLAGS="-static -Os -fPIE -fpic"
+        export LDFLAGS="-static -pie"
+        export PREFIX="${{ env.PREFIX }}"
+
+        export PKG_CONFIG="pkg-config"
+        export PKG_CONFIG_SYSROOT_DIR="$PREFIX"
+        export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
+        
+        echo "CC=$CC" >> $GITHUB_ENV
+        echo "CXX=$CXX" >> $GITHUB_ENV
+        echo "AR=$AR" >> $GITHUB_ENV
+        echo "STRIP=$STRIP" >> $GITHUB_ENV
+        echo "RANLIB=$RANLIB" >> $GITHUB_ENV
+        echo "PKG_CONFIG=$PKG_CONFIG" >> $GITHUB_ENV
+        echo "PKG_CONFIG_SYSROOT_DIR=$PKG_CONFIG_SYSROOT_DIR" >> $GITHUB_ENV
+        echo "PKG_CONFIG_LIBDIR=$PKG_CONFIG_LIBDIR" >> $GITHUB_ENV
+        echo "CFLAGS=$CFLAGS" >> $GITHUB_ENV
+        echo "LDFLAGS=$LDFLAGS" >> $GITHUB_ENV
+        echo "PREFIX=$PREFIX" >> $GITHUB_ENV
+
+    - name: Build libmnl (static)
+      run: |
+        wget https://www.netfilter.org/projects/libmnl/files/libmnl-${{ env.LIBMNL_VERSION }}.tar.bz2
+        tar -xf libmnl-${{ env.LIBMNL_VERSION }}.tar.bz2
+        cd libmnl-${{ env.LIBMNL_VERSION }}
+
+        ./configure \
+          --host=aarch64-linux-musl \
+          --prefix=$PREFIX \
+          --disable-shared \
+          --enable-static
+
+        make -j$(nproc)
+        make install
+
+    - name: Build libnftnl (static)
+      run: |
+        wget https://www.netfilter.org/projects/libnftnl/files/libnftnl-${{ env.LIBNFTNL_VERSION }}.tar.bz2
+        tar -xf libnftnl-${{ env.LIBNFTNL_VERSION }}.tar.bz2
+        cd libnftnl-${{ env.LIBNFTNL_VERSION }}
+
+        export LIBMNL_CFLAGS="-I$PREFIX/include"
+        export LIBMNL_LIBS="-L$PREFIX/lib -lmnl"
+
+        ./configure \
+          --host=aarch64-linux-musl \
+          --prefix=$PREFIX \
+          --disable-shared \
+          --enable-static \
+          --with-pic \
+          LIBMNL_CFLAGS="$LIBMNL_CFLAGS" \
+          LIBMNL_LIBS="$LIBMNL_LIBS"
+
+        make -j$(nproc)
+        make install
+
+    - name: Build nftables
+      run: |
+        wget https://www.netfilter.org/projects/nftables/files/nftables-${{ env.NFTABLES_VERSION }}.tar.xz
+        tar -xf nftables-${{ env.NFTABLES_VERSION }}.tar.xz
+        cd nftables-${{ env.NFTABLES_VERSION }}
+
+        export LIBMNL_CFLAGS="-I$PREFIX/include"
+        export LIBMNL_LIBS="-L$PREFIX/lib -lmnl"
+        export LIBNFTNL_CFLAGS="-I$PREFIX/include"
+        export LIBNFTNL_LIBS="-L$PREFIX/lib -lnftnl"
+
+        ./configure \
+          --host=aarch64-linux-musl \
+          --prefix=$PREFIX \
+          --disable-shared \
+          --enable-static \
+          --without-json \
+          --without-cli \
+          --with-cli=no \
+          --with-mini-gmp \
+          LIBMNL_CFLAGS="$LIBMNL_CFLAGS" \
+          LIBMNL_LIBS="$LIBMNL_LIBS" \
+          LIBNFTNL_CFLAGS="$LIBNFTNL_CFLAGS" \
+          LIBNFTNL_LIBS="$LIBNFTNL_LIBS"
+
+        make -j$(nproc) V=1
+        $STRIP --strip-all src/nft -o src/nft-android-arm64
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: nftables-android-arm64
+        path: nftables-${{ env.NFTABLES_VERSION }}/src/nft-android-arm64
